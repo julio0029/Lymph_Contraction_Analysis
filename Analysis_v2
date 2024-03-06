@@ -1,0 +1,114 @@
+#!/usr/bin/env python3
+#-*- coding: utf-8 -*-
+
+'''
+-------------------------------------------------------------------------------
+Copyright© 2021 Jules Devaux / Peter Russel. All Rights Reserved
+Open Source script under Apache License 2.0
+-------------------------------------------------------------------------------
+'''
+
+# ======== VARIABLES =======
+METHOD = 2	# Choose 1 or 2, to either split minute after or before analysis, respectively.
+GRAPHING=False	# Change to 'True' to plot the contraction analysis. 'False' otherwise
+fps=30			# Frame per second
+# ==========================
+
+import os
+import pandas as pd
+import numpy as np
+import neurokit2jd as nk
+import matplotlib.pyplot as plt
+
+current_path = os.path.dirname(os.path.abspath(__file__))
+
+OUTLIERS=[
+'PROM_AEV_SC1_vid3.csv',
+'PROM_AEV_AP11_vid8.csv',
+'PROM_AEV_AP3v2_vid9.csv'
+]
+
+
+def contraction_analysis(signal):
+	# Analysis
+	signals, info = nk.rsp_process(signal, sampling_rate=fps, method='khodadad') #, amplitude_min=15
+
+	signals['Baseline_Dia']=df['Outer Dia']
+
+	# Only keep columns of interest
+	results=signals.loc[:,['Baseline_Dia', 'RSP_Amplitude', 'RSP_Rate']]
+	return results, info
+
+
+# create the excel file to store the results
+writer=pd.ExcelWriter('Lymphatic_Analysis.xlsx', engine='xlsxwriter')
+
+# Retrieve all csv pathnames 
+csvs = [f for f in os.listdir(current_path) if '.csv' in f]
+
+# Analyse each csv
+for csv in csvs:
+
+	print(f"Analysing {csv}...")
+
+	try:
+		# Load csv to dataframe
+		df=pd.read_csv(csv, index_col=0)
+		
+		# Calculate the difference between outer and inner-layer
+		#df['delta']=df['Outer Dia']-df['Inner Dia']
+
+		# Erase 0 values for the files that requires to:
+		if "_0" in csv:
+			df=df.replace(0, np.nan).interpolate(method='linear')
+
+
+
+		if METHOD==1:
+
+			results, info=contraction_analysis(df['Inner Dia'])
+			# Section per minute
+			minute_df=results.groupby(np.arange(len(results))//(fps*60)
+								).agg({'Baseline_Dia':['max'],
+										'RSP_Amplitude':['mean'],
+										'RSP_Rate':['mean', 'sem', 'std']})
+
+			# Plot the results
+			if GRAPHING:
+				# if csv in ['PROM_AEV_AP3v2_vid5_0.csv',
+				# 			'PROM_AEV_AP3v2_vid9.csv',
+				# 			'PROM_AEV_AP3v2_vid1.csv',
+				# 			'PROM_AEV_SC1v2_vid7.csv',
+				# 			'PROM_AEV_SC1v2_vid6.csv',
+				# 			'PROM_AEV_AP7_vid1.csv',
+				# 			'PROM_AEV_SC1v2_vid5_0.csv']:
+				nk.rsp_plot(signals, info=info)
+
+		
+
+
+		if METHOD==2:
+			results=[] # Store all analysis
+
+			_range=60*fps
+			for i in range(0,len(df), _range):
+				result, info = contraction_analysis(df.iloc[i:i+_range]['Inner Dia'])
+				if result.empty:
+					result=pd.DataFrame(columns=['Baseline_Dia', 'RSP_Amplitude', 'RSP_Rate'], index=int(i/_range))
+				else: 
+					result=result.agg({'Baseline_Dia':['max'],
+														'RSP_Amplitude':['mean'],
+														'RSP_Rate':['mean', 'sem', 'std']})
+
+				results.append(result)
+
+			minute_df=pd.concat(results, axis=0,)
+
+		minute_df.to_excel(writer, sheet_name=csv.split('.')[0])
+
+
+	except Exception as e: print(e)
+
+# Save and close the excel file
+writer.save() 
+
